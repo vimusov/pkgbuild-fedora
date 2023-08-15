@@ -1,0 +1,6 @@
+[base]
+name=base
+baseurl=https://mirror.yandex.ru/fedora/linux/releases/$releasever/Everything/$basearch/os/
+enabled=1
+gpgcheck=0
+skip_if_unavailable=False

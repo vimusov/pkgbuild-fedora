@@ -1,13 +1,8 @@
-# Что это?
+# What?
 
-Контейнер и скрипты для сборки RPM-пакетов.
+Bunch of scripts to build RPM packages for Fedora.
+RPM can be build from SPEC+tarball (standard method) or from a plain directory with a SPEC file.
 
-# Как юзать?
+# Usage
 
-1. Создать сборочный образ:
-
-   `./update.sh ...`
-
-1. Запустить сборку:
-
-   `./build.sh ...`
+Run `./build.sh -h` for details.

@@ -3,7 +3,9 @@
 set -u
 set -o pipefail
 
+
 EMER_SHELL=0
+ALLOW_INTERNET=0
 readonly COMMIT=HEAD
 readonly RESULT_DIR=/result
 readonly SRC_DIR_PATH=/sources
@@ -24,6 +26,15 @@ on_error()
 show_msg()
 {
     echo -e "\e[0;32m>> $@ \e[m"
+}
+
+run_without_net()
+{
+    if [ $ALLOW_INTERNET -eq 1 ]; then
+        "$@"
+    else
+        unshare --net -- sh -c 'ip link set up dev lo && exec "$@"' -- "$@"
+    fi
 }
 
 build_srpm()
@@ -83,11 +94,11 @@ build_srpm()
     find "$SRC_DIR_PATH" -maxdepth 1 -not -type d -not -name "*.spec" -exec cp -v '{}' "$tmp_src_dir" \;
     new_spec="$tmp_src_dir"/${pkgname}.spec
 
-    # Source0 отсутствует в SPEC.
+    # Source0 is not found in SPEC.
     if [ -z "$src_name" ]; then
         show_msg "Source0 is not defined, creating archive from RAW sources."
 
-        # TODO: Заменить gzip на zstd когда появится его поддержка в RPM.
+        # TODO: Replace gzip with zstd when it will be supported in RPM.
         tar --create \
             --exclude-vcs --exclude='*.spec' \
             --transform="s|^[.]|${pkgname}-$pkgver|" \
@@ -103,16 +114,20 @@ build_srpm()
         if grep -qEm1 '^%prep' "$tmp_spec"; then
             awk '{ print; }  /^%prep/ { print "%setup -q"; }' < "$tmp_spec" >| "$new_spec"
         else
-            sed -r '/^%build/i %prep\n%setup -q\n'            < "$tmp_spec" >| "$new_spec"
+            if grep -qEm1 '^%build' "$tmp_spec"; then
+                sed -r '/^%build/i %prep\n%setup -q\n'        < "$tmp_spec" >| "$new_spec"
+            else
+                sed -r '/^%install/i %prep\n%setup -q\n'      < "$tmp_spec" >| "$new_spec"
+            fi
         fi
         [ $? -eq 0 ] || return 1
 
-    # Файл с архивом, указанным в Source0, в каталоге есть.
+    # Source0 tarball exists.
     elif [ -s "$SRC_DIR_PATH"/"$src_name" ]; then
         show_msg "Source0 is defined and all files are ready to use."
         cp -v "$org_spec" "$new_spec"
 
-    # В Source0 указано название архива, но самого архива нет.
+    # Source0 contains tarball name but it is not exist.
     elif [ -n "$src_name" ]; then
         case "$src_name" in
             *.tar)
@@ -160,14 +175,14 @@ build_srpm()
         [ "${PIPESTATUS[0]}${PIPESTATUS[1]}" != "00" ] && return 1
         cp -v "$org_spec" "$new_spec"
 
-    # Что-то странное...
+    # Something went wrong...
     else
         show_err "Unsupported layout of sources files."
         return 1
     fi
 
     show_msg "Building SRPM..."
-    rpmbuild \
+    run_without_net rpmbuild \
         --define "_specdir ${tmp_src_dir}/spec" \
         --define "_sourcedir $tmp_src_dir" \
         --define "_builddir ${tmp_src_dir}/build" \
@@ -272,13 +287,16 @@ main()
     show_msg "Build completed successfully."
 }
 
-while getopts "hdel:" opt; do
+while getopts "hdeil:" opt; do
     case $opt in
         d)
             set -x
             ;;
         e)
             trap on_error ERR
+            ;;
+        i)
+            ALLOW_INTERNET=1
             ;;
         \?)
             echo "ERROR: Invalid argument '$OPTARG'." >&2
